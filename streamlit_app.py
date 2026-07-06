@@ -33,7 +33,15 @@ def cached_load(csv_bytes: bytes, parser_version: int):
 
 
 def display_timestamp(value: pd.Timestamp) -> str:
-    return value.strftime("%b %d, %Y · %H:%M:%S UTC")
+    return value.strftime("%m/%d/%Y %H:%M:%S UTC")
+
+
+def display_date(value: pd.Timestamp) -> str:
+    return value.strftime("%m/%d/%Y")
+
+
+def display_time(value: pd.Timestamp) -> str:
+    return value.strftime("%H:%M:%S UTC")
 
 
 st.title("Duck Test Message Dashboard")
@@ -96,8 +104,18 @@ with st.sidebar:
 filtered = filter_messages(data, selected_devices, selected_events)
 
 window_col, duration_col, device_col, message_col = st.columns(4)
-window_col.metric("Test began", display_timestamp(test_start))
-duration_col.metric("Test ended", display_timestamp(test_end))
+window_col.metric(
+    "Test began",
+    display_date(test_start),
+    delta=display_time(test_start),
+    delta_color="off",
+)
+duration_col.metric(
+    "Test ended",
+    display_date(test_end),
+    delta=display_time(test_end),
+    delta_color="off",
+)
 device_col.metric("Ducks in selection", filtered["DeviceID"].nunique())
 message_col.metric("Selected messages", f"{len(filtered):,}")
 st.caption(f"Test duration: {format_duration(test_duration)}")
@@ -108,7 +126,12 @@ if filtered.empty:
 
 latest = filtered.loc[filtered["timestamp"].idxmax()]
 last_col, topic_col, gap_col = st.columns(3)
-last_col.metric("Last selected message", display_timestamp(latest["timestamp"]))
+last_col.metric(
+    "Last selected message",
+    display_date(latest["timestamp"]),
+    delta=display_time(latest["timestamp"]),
+    delta_color="off",
+)
 topic_col.metric("Last topic", latest["eventType"])
 gap_col.metric(
     "Before test ended",
