@@ -92,6 +92,18 @@ DUCK-1,2026-07-01T14:01:00Z,gps,"{'Payload': '{""C"": 5}'}"
         summary = packet_loss_by_topic(load_csv(csv_bytes).data)
         self.assertEqual(summary.loc[0, "missing_packets"], 2)
 
+    def test_packet_loss_recovers_counter_and_orders_by_time(self):
+        csv_bytes = b'''DeviceID,timestamp,eventType,payload
+DUCK-1,2026-07-01T14:02:00Z,gps,"{""C"":5}"
+DUCK-1,2026-07-01T14:00:00Z,gps,"{""C"":1}"
+DUCK-1,2026-07-01T14:01:00Z,gps,"{""C"":3}"
+'''
+        stale_cached_frame = load_csv(csv_bytes).data.drop(columns=["counter"])
+        summary = packet_loss_by_topic(stale_cached_frame)
+
+        self.assertEqual(summary.loc[0, "missing_packets"], 2)
+        self.assertAlmostEqual(summary.loc[0, "packet_loss_pct"], 40.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,9 +21,14 @@ st.set_page_config(
     layout="wide",
 )
 
+PARSER_VERSION = 2
+
 
 @st.cache_data(show_spinner=False)
-def cached_load(csv_bytes: bytes):
+def cached_load(csv_bytes: bytes, parser_version: int):
+    # Including the parser version in the cache key prevents older normalized
+    # DataFrames from surviving schema changes after a cloud redeploy.
+    del parser_version
     return load_csv(csv_bytes)
 
 
@@ -51,7 +56,7 @@ if uploaded_file is None:
     st.stop()
 
 try:
-    result = cached_load(uploaded_file.getvalue())
+    result = cached_load(uploaded_file.getvalue(), PARSER_VERSION)
 except CsvValidationError as exc:
     st.error(str(exc))
     st.stop()

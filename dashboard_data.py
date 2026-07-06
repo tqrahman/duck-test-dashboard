@@ -214,7 +214,20 @@ def packet_loss_by_topic(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=columns)
 
-    working = frame.sort_values(["DeviceID", "eventType", "timestamp"]).copy()
+    working = frame.copy()
+    if "counter" not in working.columns:
+        if "payload" in working.columns:
+            working["counter"] = pd.to_numeric(
+                working["payload"].map(_counter_from_payload), errors="coerce"
+            )
+        else:
+            working["counter"] = pd.Series(
+                pd.NA, index=working.index, dtype="Float64"
+            )
+
+    # Establish temporal order before taking differences within each
+    # DeviceID + eventType counter sequence.
+    working = working.sort_values("timestamp", kind="mergesort")
     working["counter"] = pd.to_numeric(working["counter"], errors="coerce")
     counter_rows = working.dropna(subset=["counter"]).copy()
 
