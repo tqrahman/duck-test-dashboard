@@ -11,6 +11,7 @@ from dashboard_data import (
     format_duration,
     last_message_by_device,
     load_csv,
+    packet_loss_by_topic,
 )
 
 
@@ -126,6 +127,38 @@ display_summary = display_summary.rename(
     }
 )
 st.dataframe(display_summary, hide_index=True, width="stretch")
+
+st.subheader("Packet loss by event topic")
+st.caption(
+    "Counter-based estimate: a counter jump greater than one contributes the skipped "
+    "values as missing packets. Backward moves are reported as resets, not loss."
+)
+packet_loss = packet_loss_by_topic(filtered)
+calculable_loss = packet_loss.dropna(subset=["packet_loss_pct"])
+if calculable_loss.empty:
+    st.info("No selected topics contain a usable C/c packet counter in Payload.")
+else:
+    loss_chart = calculable_loss[["eventType", "packet_loss_pct"]].set_index("eventType")
+    st.bar_chart(loss_chart, y="packet_loss_pct", y_label="Packet loss (%)")
+
+packet_loss_display = packet_loss.rename(
+    columns={
+        "eventType": "Event topic",
+        "received_rows": "Received rows",
+        "counter_messages": "Messages with counter",
+        "missing_packets": "Missing packets",
+        "expected_packets": "Expected packets",
+        "packet_loss_pct": "Packet loss (%)",
+        "duplicate_counters": "Duplicate counters",
+        "counter_resets": "Counter resets",
+    }
+)
+st.dataframe(
+    packet_loss_display,
+    hide_index=True,
+    width="stretch",
+    column_config={"Packet loss (%)": st.column_config.NumberColumn(format="%.2f%%")},
+)
 
 st.subheader("Message activity")
 st.caption("Each point is one received message; color represents its topic.")

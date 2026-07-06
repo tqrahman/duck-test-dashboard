@@ -8,6 +8,7 @@ from dashboard_data import (
     format_duration,
     last_message_by_device,
     load_csv,
+    packet_loss_by_topic,
 )
 
 
@@ -63,6 +64,33 @@ class DashboardDataTests(unittest.TestCase):
 
     def test_duration_format(self):
         self.assertEqual(format_duration(pd.Timedelta(seconds=3661)), "1h 1m 1s")
+
+    def test_packet_loss_is_calculated_per_device_and_topic(self):
+        csv_bytes = b'''DeviceID,timestamp,eventType,payload
+DUCK-1,2026-07-01T14:00:00Z,gps,"{""C"":1}"
+DUCK-1,2026-07-01T14:01:00Z,gps,"{""C"":3}"
+DUCK-2,2026-07-01T14:00:00Z,gps,"{""C"":5}"
+DUCK-2,2026-07-01T14:01:00Z,gps,"{""C"":8}"
+DUCK-1,2026-07-01T14:02:00Z,health,"{""c"":1}"
+DUCK-1,2026-07-01T14:03:00Z,health,"{""c"":1}"
+DUCK-1,2026-07-01T14:04:00Z,boot,"{""message"":""started""}"
+'''
+        summary = packet_loss_by_topic(load_csv(csv_bytes).data).set_index("eventType")
+
+        self.assertEqual(summary.loc["gps", "missing_packets"], 3)
+        self.assertEqual(summary.loc["gps", "expected_packets"], 7)
+        self.assertAlmostEqual(summary.loc["gps", "packet_loss_pct"], 3 / 7 * 100)
+        self.assertEqual(summary.loc["health", "duplicate_counters"], 1)
+        self.assertEqual(summary.loc["health", "packet_loss_pct"], 0)
+        self.assertTrue(pd.isna(summary.loc["boot", "packet_loss_pct"]))
+
+    def test_packet_loss_reads_nested_api_payload_counter(self):
+        csv_bytes = b'''DeviceID,timestamp,eventType,payload
+DUCK-1,2026-07-01T14:00:00Z,gps,"{'Payload': '{""C"": 2}'}"
+DUCK-1,2026-07-01T14:01:00Z,gps,"{'Payload': '{""C"": 5}'}"
+'''
+        summary = packet_loss_by_topic(load_csv(csv_bytes).data)
+        self.assertEqual(summary.loc[0, "missing_packets"], 2)
 
 
 if __name__ == "__main__":

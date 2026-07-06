@@ -54,6 +54,20 @@ def _payload_dict(value: object) -> dict:
     return {}
 
 
+def _counter_from_payload(value: object) -> object:
+    payload = _payload_dict(value)
+    for key in ("C", "c"):
+        if key in payload:
+            return payload[key]
+
+    # API-style exports wrap the device payload in an outer payload object.
+    inner = _payload_dict(payload.get("Payload"))
+    for key in ("C", "c"):
+        if key in inner:
+            return inner[key]
+    return pd.NA
+
+
 def load_csv(csv_bytes: bytes) -> LoadResult:
     """Load a DMS CSV and normalize its message identity and timestamps."""
     try:
@@ -95,8 +109,12 @@ def load_csv(csv_bytes: bytes) -> LoadResult:
     if "payload" in normalized.columns:
         payloads = normalized["payload"].map(_payload_dict)
         payload_devices = payloads.map(lambda item: item.get("DeviceID"))
+        normalized["counter"] = pd.to_numeric(
+            normalized["payload"].map(_counter_from_payload), errors="coerce"
+        )
     else:
         payload_devices = pd.Series(pd.NA, index=normalized.index, dtype="object")
+        normalized["counter"] = pd.Series(pd.NA, index=normalized.index, dtype="Float64")
 
     explicit_devices = (
         normalized["DeviceID"]
@@ -173,6 +191,88 @@ def last_message_by_device(frame: pd.DataFrame, test_end: pd.Timestamp) -> pd.Da
     summary = summary.join(counts, on="DeviceID")
     summary["time_before_test_end"] = test_end - summary["last_message"]
     return summary.sort_values("last_message", ascending=False).reset_index(drop=True)
+
+
+def packet_loss_by_topic(frame: pd.DataFrame) -> pd.DataFrame:
+    """Estimate packet loss from per-device, per-topic counter gaps.
+
+    This follows the existing notebook definition: after sorting each DeviceID/topic
+    series by time, a positive counter difference greater than one contributes
+    ``difference - 1`` missing packets. Duplicate counters and backward moves are
+    reported but do not count as missing packets.
+    """
+    columns = [
+        "eventType",
+        "received_rows",
+        "counter_messages",
+        "missing_packets",
+        "expected_packets",
+        "packet_loss_pct",
+        "duplicate_counters",
+        "counter_resets",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+
+    working = frame.sort_values(["DeviceID", "eventType", "timestamp"]).copy()
+    working["counter"] = pd.to_numeric(working["counter"], errors="coerce")
+    counter_rows = working.dropna(subset=["counter"]).copy()
+
+    if not counter_rows.empty:
+        counter_rows["counter_diff"] = counter_rows.groupby(
+            ["DeviceID", "eventType"], sort=False
+        )["counter"].diff()
+        counter_rows["missing_packets"] = (
+            counter_rows["counter_diff"].where(counter_rows["counter_diff"] > 1, 1) - 1
+        ).fillna(0)
+        counter_rows["duplicate_counter"] = counter_rows["counter_diff"].eq(0)
+        counter_rows["counter_reset"] = counter_rows["counter_diff"].lt(0)
+
+        counter_summary = counter_rows.groupby("eventType", as_index=False).agg(
+            counter_messages=("counter", "size"),
+            missing_packets=("missing_packets", "sum"),
+            duplicate_counters=("duplicate_counter", "sum"),
+            counter_resets=("counter_reset", "sum"),
+        )
+    else:
+        counter_summary = pd.DataFrame(
+            columns=[
+                "eventType",
+                "counter_messages",
+                "missing_packets",
+                "duplicate_counters",
+                "counter_resets",
+            ]
+        )
+
+    received = working.groupby("eventType", as_index=False).size().rename(
+        columns={"size": "received_rows"}
+    )
+    summary = received.merge(counter_summary, on="eventType", how="left")
+    calculable = summary["counter_messages"].notna()
+    summary.loc[calculable, "expected_packets"] = (
+        summary.loc[calculable, "counter_messages"]
+        + summary.loc[calculable, "missing_packets"]
+    )
+    summary.loc[calculable, "packet_loss_pct"] = (
+        summary.loc[calculable, "missing_packets"]
+        / summary.loc[calculable, "expected_packets"]
+        * 100
+    )
+
+    for column in (
+        "received_rows",
+        "counter_messages",
+        "missing_packets",
+        "expected_packets",
+        "duplicate_counters",
+        "counter_resets",
+    ):
+        summary[column] = summary[column].astype("Int64")
+
+    return summary[columns].sort_values(
+        ["packet_loss_pct", "eventType"], ascending=[False, True], na_position="last"
+    ).reset_index(drop=True)
 
 
 def format_duration(value: pd.Timedelta) -> str:
